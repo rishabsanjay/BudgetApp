@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		7DA208812DF9403D006C7494 /* CoreXLSX in Frameworks */ = {isa = PBXBuildFile; productRef = 7DA208802DF9403D006C7494 /* CoreXLSX */; };
+		7DB942B12E03BF1500C37210 /* LinkKit in Frameworks */ = {isa = PBXBuildFile; productRef = 7DB942B02E03BF1500C37210 /* LinkKit */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -57,6 +58,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7DA208812DF9403D006C7494 /* CoreXLSX in Frameworks */,
+				7DB942B12E03BF1500C37210 /* LinkKit in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,6 +120,7 @@
 			name = BudgetApp;
 			packageProductDependencies = (
 				7DA208802DF9403D006C7494 /* CoreXLSX */,
+				7DB942B02E03BF1500C37210 /* LinkKit */,
 			);
 			productName = BudgetApp;
 			productReference = 7DA208442DF939D6006C7494 /* BudgetApp.app */;
@@ -203,6 +206,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				7DA208722DF93D3F006C7494 /* XCRemoteSwiftPackageReference "CoreXLSX" */,
+				7DB942AF2E03BF1500C37210 /* XCRemoteSwiftPackageReference "plaid-link-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 7DA208452DF939D6006C7494 /* Products */;
@@ -419,7 +423,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = rishab.BudgetApp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rishabsanjay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
@@ -457,7 +461,7 @@
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 15.1;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = rishab.BudgetApp;
+				PRODUCT_BUNDLE_IDENTIFIER = com.rishabsanjay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
@@ -604,6 +608,14 @@
 				minimumVersion = 0.14.2;
 			};
 		};
+		7DB942AF2E03BF1500C37210 /* XCRemoteSwiftPackageReference "plaid-link-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/plaid/plaid-link-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 6.2.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -611,6 +623,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 7DA208722DF93D3F006C7494 /* XCRemoteSwiftPackageReference "CoreXLSX" */;
 			productName = CoreXLSX;
+		};
+		7DB942B02E03BF1500C37210 /* LinkKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 7DB942AF2E03BF1500C37210 /* XCRemoteSwiftPackageReference "plaid-link-ios" */;
+			productName = LinkKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
