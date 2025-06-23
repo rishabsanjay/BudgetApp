@@ -1,14 +1,14 @@
 import Foundation
 
 struct Transaction: Identifiable, Hashable {
-    let id: UUID
+    let id: String
     let date: Date
     let description: String
     let amount: Double
     var category: TransactionCategory
     let type: TransactionType
     
-    init(id: UUID = UUID(), date: Date, description: String, amount: Double, category: TransactionCategory = .uncategorized, type: TransactionType = .expense) {
+    init(id: String = UUID().uuidString, date: Date, description: String, amount: Double, category: TransactionCategory = .uncategorized, type: TransactionType = .expense) {
         self.id = id
         self.date = date
         self.description = description
@@ -20,24 +20,50 @@ struct Transaction: Identifiable, Hashable {
     static func predictCategory(from description: String) -> TransactionCategory {
         let description = description.lowercased()
         
-        // Common keywords for each category
+        // More precise keywords for each category
         let categoryKeywords: [(TransactionCategory, [String])] = [
-            (.groceries, ["grocery", "supermarket", "food", "market", "walmart", "trader", "whole foods", "safeway", "kroger", "costco", "aldi"]),
-            (.utilities, ["electric", "water", "gas", "internet", "wifi", "phone", "bill", "utility", "utilities", "power", "energy"]),
-            (.entertainment, ["movie", "netflix", "spotify", "hulu", "disney", "cinema", "theater", "concert", "game", "steam", "xbox", "playstation"]),
-            (.transportation, ["uber", "lyft", "taxi", "bus", "train", "subway", "metro", "gas", "fuel", "parking", "transit", "transport"]),
-            (.dining, ["restaurant", "cafe", "coffee", "starbucks", "mcdonald", "burger", "pizza", "sushi", "dining", "doordash", "grubhub", "ubereats"]),
-            (.shopping, ["amazon", "target", "walmart", "store", "shop", "mall", "clothing", "fashion", "retail", "purchase"]),
-            (.healthcare, ["doctor", "medical", "health", "dental", "pharmacy", "hospital", "clinic", "medicine", "healthcare"]),
-            (.housing, ["rent", "mortgage", "apartment", "house", "housing", "maintenance", "repair", "insurance"]),
-            (.education, ["school", "college", "university", "course", "class", "book", "tuition", "education", "learning", "training"])
+            (.groceries, ["grocery", "supermarket", "whole foods", "safeway", "kroger", "costco", "aldi", "trader joe"]),
+            (.utilities, ["electric", "water", "gas bill", "internet", "wifi", "phone", "cell", "verizon", "at&t", "comcast", "xfinity", "spectrum", "utility", "power", "energy"]),
+            (.entertainment, ["netflix", "spotify", "hulu", "disney", "cinema", "theater", "theatre", "concert", "steam", "xbox", "playstation", "climbing", "gym", "fitness", "recreation"]),
+            (.transportation, ["uber", "lyft", "taxi", "bus", "train", "subway", "metro", "parking", "gas station", "shell", "chevron", "exxon", "bp"]),
+            (.dining, ["restaurant", "cafe", "coffee shop", "starbucks", "dunkin", "fast food", "delivery"]),
+            (.shopping, ["amazon", "target", "walmart", "best buy", "home depot", "lowes", "ikea", "macy", "nordstrom", "clothing", "retail"]),
+            (.healthcare, ["doctor", "medical", "health", "dental", "dentist", "pharmacy", "cvs pharmacy", "walgreens pharmacy", "hospital", "clinic"]),
+            (.housing, ["rent", "mortgage", "apartment", "house", "insurance", "property", "hoa"]),
+            (.education, ["school", "college", "university", "tuition", "education", "learning"])
         ]
         
-        // Check each category's keywords
+        // Check for exact matches first
         for (category, keywords) in categoryKeywords {
-            if keywords.contains(where: { description.contains($0) }) {
+            if keywords.contains(where: { keyword in
+                description.contains(keyword)
+            }) {
                 return category
             }
+        }
+        
+        // Specific brand name matching - more precise
+        if description.contains("mcdonald") || description.contains("kfc") ||
+           description.contains("taco bell") || description.contains("chipotle") ||
+           description.contains("wendy") || description.contains("burger king") ||
+           description.contains("pizza hut") || description.contains("domino") ||
+           description.contains("papa john") || description.contains("subway") && description.contains("restaurant") {
+            return .dining
+        }
+        
+        if description.contains("united airlines") || description.contains("american airlines") ||
+           description.contains("delta") || description.contains("southwest") ||
+           description.contains("jetblue") || description.contains("alaska air") {
+            return .transportation
+        }
+        
+        // Special exclusions
+        if description.contains("payment") && (description.contains("credit") || description.contains("card")) {
+            return .uncategorized
+        }
+        
+        if description.contains("deposit") || description.contains("transfer") || description.contains("ach electronic") {
+            return .uncategorized
         }
         
         return .uncategorized
@@ -49,7 +75,7 @@ enum TransactionType: String, CaseIterable {
     case expense = "Expense"
 }
 
-enum TransactionCategory: String, CaseIterable {
+enum TransactionCategory: String, CaseIterable, Codable {
     case groceries = "Groceries"
     case utilities = "Utilities"
     case entertainment = "Entertainment"
