@@ -1,14 +1,49 @@
+# Main entry point for Railway deployment
+import os
 from flask import Flask, request, jsonify
 import requests
 from datetime import datetime, timedelta
-import os
 
 app = Flask(__name__)
 
-# ADD: Environment variable configuration
+# Environment variable configuration
 PLAID_CLIENT_ID = os.environ.get('PLAID_CLIENT_ID', '6851fb214123ce0022d42dc0')
 PLAID_SECRET = os.environ.get('PLAID_SECRET', 'bdcc4a47dc8ea23362bb67bbca335d')
 PLAID_ENV = os.environ.get('PLAID_ENV', 'sandbox')  # sandbox, development, or production
+
+# ADD: Link token creation endpoint
+@app.route('/create_link_token', methods=['POST'])
+def create_link_token():
+    try:
+        print("Creating link token...")
+        
+        response = requests.post(
+            f'https://{PLAID_ENV}.plaid.com/link/token/create',
+            headers={'Content-Type': 'application/json'},
+            json={
+                'client_id': PLAID_CLIENT_ID,
+                'secret': PLAID_SECRET,
+                'client_name': 'Budget App',
+                'country_codes': ['US'],
+                'language': 'en',
+                'user': {
+                    'client_user_id': 'budget_app_user_' + str(int(datetime.now().timestamp()))
+                },
+                'products': ['transactions']
+            }
+        )
+        
+        result = response.json()
+        print(f"Link token response: {result}")
+        
+        if 'link_token' not in result:
+            print(f"Error creating link token: {result}")
+            return jsonify({'error': 'Failed to create link token'}), 400
+            
+        return jsonify({'link_token': result['link_token']})
+    except Exception as e:
+        print(f"Error in create_link_token: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/exchange_token', methods=['POST'])
 def exchange_token():
@@ -21,7 +56,6 @@ def exchange_token():
             f'https://{PLAID_ENV}.plaid.com/item/public_token/exchange',
             headers={'Content-Type': 'application/json'},
             json={
-                # CHANGE: Use environment variables
                 'client_id': PLAID_CLIENT_ID,
                 'secret': PLAID_SECRET,
                 'public_token': public_token
@@ -57,7 +91,6 @@ def get_transactions():
             f'https://{PLAID_ENV}.plaid.com/accounts/get',
             headers={'Content-Type': 'application/json'},
             json={
-                # CHANGE: Use environment variables
                 'client_id': PLAID_CLIENT_ID,
                 'secret': PLAID_SECRET,
                 'access_token': access_token
@@ -72,7 +105,6 @@ def get_transactions():
             f'https://{PLAID_ENV}.plaid.com/transactions/get',
             headers={'Content-Type': 'application/json'},
             json={
-                # CHANGE: Use environment variables
                 'client_id': PLAID_CLIENT_ID,
                 'secret': PLAID_SECRET,
                 'access_token': access_token,
@@ -120,10 +152,12 @@ def get_transactions():
         print(f"Error in get_transactions: {e}")
         return jsonify({'error': str(e)}), 500
 
+# Health check endpoint
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'healthy', 'service': 'budget-app-backend'})
 
+# CORS headers for testing
 @app.after_request
 def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
@@ -132,5 +166,6 @@ def after_request(response):
     return response
 
 if __name__ == '__main__':
+    # Use environment port for deployment
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)

@@ -10,8 +10,8 @@ struct TransactionsView: View {
     @State private var plaidStatusMessage = ""
     @State private var selectedCategory: TransactionCategory?
     
-    // This is the hardcoded link token you were using for manual testing
-    @State private var linkToken: String? = "link-sandbox-7b619977-a198-4200-9a5a-57926de8b15b"
+    @State private var linkToken: String? = nil
+    @State private var isLoadingLinkToken = false
     
     var body: some View {
         NavigationStack {
@@ -26,7 +26,7 @@ struct TransactionsView: View {
                     loadingBanner
                 }
                 
-                if transactionManager.transactions.isEmpty && !isLoadingPlaidData { 
+                if transactionManager.transactions.isEmpty && !isLoadingPlaidData {
                     emptyStateView
                         .background(
                             LinearGradient(
@@ -63,28 +63,40 @@ struct TransactionsView: View {
                         }
                         
                         Button {
-                            if self.linkToken != nil {
-                                showingPlaidLink = true
-                            } else {
-                                transactionManager.errorMessage = "Plaid Link Token is missing. Please try again."
-                                transactionManager.showError = true
+                            Task {
+                                await generateLinkTokenAndConnect()
                             }
                         } label: {
-                            Image(systemName: "building.columns.fill")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundColor(.white)
-                                .frame(width: 32, height: 32)
-                                .background(
-                                    LinearGradient(
-                                        colors: [Color.green, Color.green.opacity(0.8)],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
+                            if isLoadingLinkToken {
+                                ProgressView()
+                                    .scaleEffect(0.8)
+                                    .tint(.white)
+                                    .frame(width: 32, height: 32)
+                                    .background(
+                                        LinearGradient(
+                                            colors: [Color.green, Color.green.opacity(0.8)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
                                     )
-                                )
-                                .clipShape(Circle())
-                                .shadow(color: .green.opacity(0.3), radius: 4, x: 0, y: 2)
+                                    .clipShape(Circle())
+                            } else {
+                                Image(systemName: "building.columns.fill")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .foregroundColor(.white)
+                                    .frame(width: 32, height: 32)
+                                    .background(
+                                        LinearGradient(
+                                            colors: [Color.green, Color.green.opacity(0.8)],
+                                            startPoint: .topLeading,
+                                            endPoint: .bottomTrailing
+                                        )
+                                    )
+                                    .clipShape(Circle())
+                                    .shadow(color: .green.opacity(0.3), radius: 4, x: 0, y: 2)
+                            }
                         }
-                        .disabled(isLoadingPlaidData)
+                        .disabled(isLoadingPlaidData || isLoadingLinkToken)
                     }
                 }
             }
@@ -294,8 +306,8 @@ struct TransactionsView: View {
                 }
                 
                 Button {
-                    if self.linkToken != nil {
-                        showingPlaidLink = true
+                    Task {
+                        await generateLinkTokenAndConnect()
                     }
                 } label: {
                     HStack(spacing: 12) {
@@ -444,7 +456,7 @@ struct TransactionsView: View {
             plaidStatusMessage = "Exchanging tokens..."
         }
         
-        let exchangeURL = URL(string: "http://127.0.0.1:5000/exchange_token")!
+        let exchangeURL = URL(string: APIConfig.exchangeTokenEndpoint)!
         var exchangeRequest = URLRequest(url: exchangeURL)
         exchangeRequest.httpMethod = "POST"
         exchangeRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -472,7 +484,7 @@ struct TransactionsView: View {
             plaidStatusMessage = "Fetching your transactions..."
         }
         
-        let transactionsURLString = "http://127.0.0.1:5000/get_transactions?access_token=\(accessToken)"
+        let transactionsURLString = "\(APIConfig.getTransactionsEndpoint)?access_token=\(accessToken)"
         guard let transactionsURL = URL(string: transactionsURLString) else {
             throw NSError(domain: "PlaidError", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid transactions URL"])
         }
@@ -535,6 +547,45 @@ struct TransactionsView: View {
                 if !transactionManager.showError {
                    plaidStatusMessage = ""
                 }
+            }
+        }
+    }
+    
+    private func generateLinkTokenAndConnect() async {
+        await MainActor.run {
+            isLoadingLinkToken = true
+        }
+        
+        do {
+            let linkTokenURL = URL(string: APIConfig.createLinkTokenEndpoint)!
+            var request = URLRequest(url: linkTokenURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+                let errorData = String(data: data, encoding: .utf8) ?? "No error data"
+                throw NSError(domain: "LinkTokenError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to create link token. Server said: \(errorData)"])
+            }
+            
+            let responseData = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            guard let token = responseData?["link_token"] as? String else {
+                throw NSError(domain: "LinkTokenError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No link token received"])
+            }
+            
+            await MainActor.run {
+                self.linkToken = token
+                isLoadingLinkToken = false
+                showingPlaidLink = true
+            }
+            
+        } catch {
+            await MainActor.run {
+                isLoadingLinkToken = false
+                transactionManager.errorMessage = "Failed to generate link token: \(error.localizedDescription)"
+                transactionManager.showError = true
             }
         }
     }
