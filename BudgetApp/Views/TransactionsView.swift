@@ -452,6 +452,8 @@ struct TransactionsView: View {
     }
     
     private func fetchTransactionsFromPlaid(publicToken: String) async throws {
+        print("💳 Starting transaction fetch with public token: \(String(publicToken.prefix(20)))...")
+        
         await MainActor.run {
             plaidStatusMessage = "Exchanging tokens..."
         }
@@ -460,25 +462,31 @@ struct TransactionsView: View {
         var exchangeRequest = URLRequest(url: exchangeURL)
         exchangeRequest.httpMethod = "POST"
         exchangeRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        exchangeRequest.timeoutInterval = 30
         
         let exchangeBody = ["public_token": publicToken]
         exchangeRequest.httpBody = try JSONSerialization.data(withJSONObject: exchangeBody)
         
+        print("💳 Exchanging public token for access token...")
         let (exchangeData, exchangeUrlResponse) = try await URLSession.shared.data(for: exchangeRequest)
 
+        let exchangeStatusCode = (exchangeUrlResponse as? HTTPURLResponse)?.statusCode ?? -1
+        let exchangeResponseString = String(data: exchangeData, encoding: .utf8) ?? "No response data"
+        print("💳 Exchange Response Status: \(exchangeStatusCode)")
+        print("💳 Exchange Response: \(exchangeResponseString)")
+
         guard let httpExchangeResponse = exchangeUrlResponse as? HTTPURLResponse, httpExchangeResponse.statusCode == 200 else {
-            let statusCode = (exchangeUrlResponse as? HTTPURLResponse)?.statusCode ?? -1
-            let errorData = String(data: exchangeData, encoding: .utf8) ?? "No error data"
-            print("Exchange token failed. Status: \(statusCode). Data: \(errorData)")
-            throw NSError(domain: "PlaidError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to exchange public token. Server said: \(errorData)"])
+            throw NSError(domain: "PlaidError", code: exchangeStatusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to exchange public token (Status: \(exchangeStatusCode)): \(exchangeResponseString)"])
         }
 
         let exchangeResponse = try JSONSerialization.jsonObject(with: exchangeData) as? [String: Any]
         
         guard let accessToken = exchangeResponse?["access_token"] as? String else {
-            print("Access token not found in exchange response: \(String(describing: exchangeResponse))")
-            throw NSError(domain: "PlaidError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No access token received"])
+            print("💳 Access token not found in exchange response: \(String(describing: exchangeResponse))")
+            throw NSError(domain: "PlaidError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No access token received from server"])
         }
+        
+        print("💳 Successfully received access token: \(String(accessToken.prefix(20)))...")
         
         await MainActor.run {
             plaidStatusMessage = "Fetching your transactions..."
@@ -489,19 +497,32 @@ struct TransactionsView: View {
             throw NSError(domain: "PlaidError", code: -2, userInfo: [NSLocalizedDescriptionKey: "Invalid transactions URL"])
         }
         
-        let (transactionsData, transactionsUrlResponse) = try await URLSession.shared.data(for: URLRequest(url: transactionsURL))
+        var transactionsRequest = URLRequest(url: transactionsURL)
+        transactionsRequest.timeoutInterval = 45
+        
+        print("💳 Fetching transactions from: \(APIConfig.getTransactionsEndpoint)")
+        let (transactionsData, transactionsUrlResponse) = try await URLSession.shared.data(for: transactionsRequest)
+
+        let transactionsStatusCode = (transactionsUrlResponse as? HTTPURLResponse)?.statusCode ?? -1
+        let transactionsResponseString = String(data: transactionsData, encoding: .utf8) ?? "No response data"
+        print("💳 Transactions Response Status: \(transactionsStatusCode)")
+        print("💳 Transactions Response Length: \(transactionsData.count) bytes")
 
         guard let httpTransactionsResponse = transactionsUrlResponse as? HTTPURLResponse, httpTransactionsResponse.statusCode == 200 else {
-            let statusCode = (transactionsUrlResponse as? HTTPURLResponse)?.statusCode ?? -1
-            let errorData = String(data: transactionsData, encoding: .utf8) ?? "No error data"
-            print("Get transactions failed. Status: \(statusCode). Data: \(errorData)")
-            throw NSError(domain: "PlaidError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get transactions. Server said: \(errorData)"])
+            throw NSError(domain: "PlaidError", code: transactionsStatusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to get transactions (Status: \(transactionsStatusCode)): \(transactionsResponseString)"])
         }
         
-        print("Raw transaction data: \(String(data: transactionsData, encoding: .utf8) ?? "No data")")
+        print("💳 Raw transaction data preview: \(String(transactionsResponseString.prefix(500)))...")
         
         let responseData = try JSONSerialization.jsonObject(with: transactionsData) as? [String: Any] ?? [:]
         let plaidTransactions = responseData["transactions"] as? [[String: Any]] ?? []
+        let totalTransactions = responseData["total_transactions"] as? Int ?? 0
+        
+        print("💳 Parsed \(plaidTransactions.count) transactions from response (total available: \(totalTransactions))")
+        
+        if plaidTransactions.isEmpty {
+            print("💳 No transactions found in response. Full response keys: \(responseData.keys)")
+        }
         
         let appTransactions = plaidTransactions.compactMap { dict -> Transaction? in
             guard let dateStr = dict["date"] as? String,
@@ -509,7 +530,7 @@ struct TransactionsView: View {
                   let name = dict["name"] as? String,
                   let _ = dict["transaction_id"] as? String
             else {
-                print("Skipping transaction due to missing fields: \(dict)")
+                print("💳 Skipping transaction due to missing fields: \(dict)")
                 return nil
             }
             
@@ -528,21 +549,28 @@ struct TransactionsView: View {
             )
         }
         
+        print("💳 Successfully converted \(appTransactions.count) transactions to app format")
+        
         await MainActor.run {
             if appTransactions.isEmpty && !plaidTransactions.isEmpty {
-                 plaidStatusMessage = "Fetched Plaid transactions, but failed to map them to app model."
-                 transactionManager.errorMessage = "Could not process transactions from Plaid."
-                 transactionManager.showError = true
+                plaidStatusMessage = "⚠️ Fetched \(plaidTransactions.count) Plaid transactions, but failed to map them to app model."
+                transactionManager.errorMessage = "Could not process transactions from Plaid. Raw data format may have changed."
+                transactionManager.showError = true
+            } else if appTransactions.isEmpty && totalTransactions == 0 {
+                plaidStatusMessage = "ℹ️ No transactions found in connected accounts."
+                transactionManager.errorMessage = "No transactions found. For sandbox testing, try using credentials:\nUsername: user_transactions_dynamic\nPassword: password\n\nThis will provide sample transaction data."
+                transactionManager.showError = true
             } else if appTransactions.isEmpty {
-                plaidStatusMessage = "No transactions found."
-                transactionManager.errorMessage = "No transactions found in the connected accounts. For sandbox, use 'user_transactions_dynamic' / 'password' to see sample data."
+                plaidStatusMessage = "⚠️ Found \(totalTransactions) transactions but couldn't process them."
+                transactionManager.errorMessage = "Found transactions but couldn't process them. Please contact support."
                 transactionManager.showError = true
             } else {
-                plaidStatusMessage = "Successfully loaded \(appTransactions.count) transactions!"
+                plaidStatusMessage = "✅ Successfully loaded \(appTransactions.count) transactions!"
                 transactionManager.transactions.append(contentsOf: appTransactions)
+                print("💳 Added \(appTransactions.count) transactions to transaction manager")
             }
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 isLoadingPlaidData = false
                 if !transactionManager.showError {
                    plaidStatusMessage = ""
@@ -557,34 +585,74 @@ struct TransactionsView: View {
         }
         
         do {
+            print("🔗 Starting link token generation...")
+            print("🔗 API Endpoint: \(APIConfig.createLinkTokenEndpoint)")
+            
             let linkTokenURL = URL(string: APIConfig.createLinkTokenEndpoint)!
             var request = URLRequest(url: linkTokenURL)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 30
             
+            print("🔗 Making request to backend...")
             let (data, response) = try await URLSession.shared.data(for: request)
             
-            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-                let errorData = String(data: data, encoding: .utf8) ?? "No error data"
-                throw NSError(domain: "LinkTokenError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Failed to create link token. Server said: \(errorData)"])
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let responseString = String(data: data, encoding: .utf8) ?? "No response data"
+            print("🔗 Response Status: \(statusCode)")
+            print("🔗 Response Data: \(responseString)")
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "LinkTokenError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP response"])
             }
             
-            let responseData = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-            guard let token = responseData?["link_token"] as? String else {
-                throw NSError(domain: "LinkTokenError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No link token received"])
-            }
-            
-            await MainActor.run {
-                self.linkToken = token
-                isLoadingLinkToken = false
-                showingPlaidLink = true
+            switch httpResponse.statusCode {
+            case 200:
+                let responseData = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                guard let token = responseData?["link_token"] as? String else {
+                    throw NSError(domain: "LinkTokenError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No link token received from server. Response: \(responseString)"])
+                }
+                
+                print("🔗 Successfully received link token: \(String(token.prefix(20)))...")
+                
+                await MainActor.run {
+                    self.linkToken = token
+                    isLoadingLinkToken = false
+                    showingPlaidLink = true
+                }
+                
+            case 400...499:
+                throw NSError(domain: "LinkTokenError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Client error: \(responseString)"])
+                
+            case 500...599:
+                throw NSError(domain: "LinkTokenError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Server error: \(responseString). Please try again later."])
+                
+            default:
+                throw NSError(domain: "LinkTokenError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Unexpected status code \(statusCode): \(responseString)"])
             }
             
         } catch {
+            print("🔗 Error generating link token: \(error)")
             await MainActor.run {
                 isLoadingLinkToken = false
-                transactionManager.errorMessage = "Failed to generate link token: \(error.localizedDescription)"
+                
+                let userMessage: String
+                if let urlError = error as? URLError {
+                    switch urlError.code {
+                    case .notConnectedToInternet:
+                        userMessage = "No internet connection. Please check your network and try again."
+                    case .timedOut:
+                        userMessage = "Request timed out. Please check your internet connection and try again."
+                    case .cannotConnectToHost:
+                        userMessage = "Cannot connect to server. Please try again later."
+                    default:
+                        userMessage = "Network error: \(urlError.localizedDescription)"
+                    }
+                } else {
+                    userMessage = error.localizedDescription
+                }
+                
+                transactionManager.errorMessage = "Failed to generate link token: \(userMessage)"
                 transactionManager.showError = true
             }
         }
