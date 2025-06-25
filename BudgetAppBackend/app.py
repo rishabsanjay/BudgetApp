@@ -1,8 +1,14 @@
 from flask import Flask, request, jsonify
 import requests
 from datetime import datetime, timedelta
+import os
 
 app = Flask(__name__)
+
+# ADD: Environment variable configuration
+PLAID_CLIENT_ID = os.environ.get('PLAID_CLIENT_ID', '6851fb214123ce0022d42dc0')
+PLAID_SECRET = os.environ.get('PLAID_SECRET', 'bdcc4a47dc8ea23362bb67bbca335d')
+PLAID_ENV = os.environ.get('PLAID_ENV', 'sandbox')  # sandbox, development, or production
 
 @app.route('/exchange_token', methods=['POST'])
 def exchange_token():
@@ -12,11 +18,12 @@ def exchange_token():
         
         # Exchange public token for access token
         response = requests.post(
-            'https://sandbox.plaid.com/item/public_token/exchange',
+            f'https://{PLAID_ENV}.plaid.com/item/public_token/exchange',
             headers={'Content-Type': 'application/json'},
             json={
-                'client_id': '6851fb214123ce0022d42dc0',
-                'secret': 'bdcc4a47dc8ea23362bb67bbca335d',
+                # CHANGE: Use environment variables
+                'client_id': PLAID_CLIENT_ID,
+                'secret': PLAID_SECRET,
                 'public_token': public_token
             }
         )
@@ -47,11 +54,12 @@ def get_transactions():
         
         # Get accounts first to see what we're working with
         accounts_response = requests.post(
-            'https://sandbox.plaid.com/accounts/get',
+            f'https://{PLAID_ENV}.plaid.com/accounts/get',
             headers={'Content-Type': 'application/json'},
             json={
-                'client_id': '6851fb214123ce0022d42dc0',
-                'secret': 'bdcc4a47dc8ea23362bb67bbca335d',
+                # CHANGE: Use environment variables
+                'client_id': PLAID_CLIENT_ID,
+                'secret': PLAID_SECRET,
                 'access_token': access_token
             }
         )
@@ -61,11 +69,12 @@ def get_transactions():
         
         # Get transactions
         response = requests.post(
-            'https://sandbox.plaid.com/transactions/get',
+            f'https://{PLAID_ENV}.plaid.com/transactions/get',
             headers={'Content-Type': 'application/json'},
             json={
-                'client_id': '6851fb214123ce0022d42dc0',
-                'secret': 'bdcc4a47dc8ea23362bb67bbca335d',
+                # CHANGE: Use environment variables
+                'client_id': PLAID_CLIENT_ID,
+                'secret': PLAID_SECRET,
                 'access_token': access_token,
                 'start_date': str(start_date),
                 'end_date': str(end_date)
@@ -111,6 +120,17 @@ def get_transactions():
         print(f"Error in get_transactions: {e}")
         return jsonify({'error': str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({'status': 'healthy', 'service': 'budget-app-backend'})
 
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)
