@@ -4,36 +4,73 @@ import Foundation
 class SmartCategorizationService: ObservableObject {
     @Published var reviewQueue: [TransactionReview] = []
     @Published var learningStats = LearningStats()
+    @Published var isProcessing = false
+    @Published var apiErrorMessage: String?
     
     private let categoryService = CategoryService()
     private let personalLearningEngine = PersonalLearningEngine()
     
-    // MARK: - Smart Categorization Pipeline
+    // Fina Money API Configuration
+    private let finaAPIBaseURL = FinaAPIConfig.baseURL
+    private let finaAPIKey = FinaAPIConfig.apiKey
+    
+    // MARK: - Smart Categorization Pipeline (API-First Approach)
     
     func categorizeTransactions(_ transactions: [Transaction]) async -> [Transaction] {
+        isProcessing = true
+        defer { isProcessing = false }
+        
         var processedTransactions: [Transaction] = []
         var needsReview: [TransactionReview] = []
         
-        for transaction in transactions {
-            let result = await smartCategorize(transaction)
+        print("🔄 Starting categorization for \(transactions.count) transactions")
+        
+        // Step 1: Try Fina Money API for all transactions
+        let apiResults = await categorizeWithFinaAPI(transactions)
+        
+        for (index, transaction) in transactions.enumerated() {
+            var categorizedTransaction = transaction
+            var confidence: Double = 0.0
+            var reason = ""
+            var alternatives: [TransactionCategory] = []
             
-            switch result.confidence {
-            case 0.95...1.0:
+            // Check if we got a valid API result
+            if index < apiResults.count, let apiCategory = apiResults[index] {
+                categorizedTransaction.category = apiCategory
+                confidence = 0.95 // High confidence for API results
+                reason = "Categorized by Fina Money API"
+                alternatives = generateAlternatives(for: apiCategory)
+                learningStats.apiSuccessCount += 1
+                
+                print("✅ API categorized: \(transaction.description) -> \(apiCategory)")
+                
+            } else {
+                // Step 2: Fallback to minimal rule-based categorization
+                let fallbackResult = await fallbackCategorization(transaction)
+                categorizedTransaction.category = fallbackResult.category
+                confidence = fallbackResult.confidence
+                reason = fallbackResult.reason
+                alternatives = fallbackResult.alternatives
+                learningStats.fallbackCount += 1
+                
+                print("⚠️ Fallback categorized: \(transaction.description) -> \(fallbackResult.category)")
+            }
+            
+            // Determine if needs review based on confidence
+            switch confidence {
+            case 0.90...1.0:
                 // High confidence - auto-categorize
-                processedTransactions.append(result.transaction)
+                processedTransactions.append(categorizedTransaction)
                 learningStats.highConfidenceCount += 1
                 
-            case 0.70..<0.95:
-                // Medium confidence - add suggestions but auto-categorize
-                var enhancedTransaction = result.transaction
-                processedTransactions.append(enhancedTransaction)
-                
-                // Add to review queue with suggestions for user to verify later
+            case 0.70..<0.90:
+                // Medium confidence - auto-categorize but flag for review
+                processedTransactions.append(categorizedTransaction)
                 let review = TransactionReview(
-                    transaction: enhancedTransaction,
-                    confidence: result.confidence,
-                    alternatives: result.alternatives,
-                    reason: result.reason,
+                    transaction: categorizedTransaction,
+                    confidence: confidence,
+                    alternatives: alternatives,
+                    reason: reason,
                     priority: .medium
                 )
                 needsReview.append(review)
@@ -41,12 +78,12 @@ class SmartCategorizationService: ObservableObject {
                 
             default:
                 // Low confidence - requires review
-                processedTransactions.append(result.transaction)
+                processedTransactions.append(categorizedTransaction)
                 let review = TransactionReview(
-                    transaction: result.transaction,
-                    confidence: result.confidence,
-                    alternatives: result.alternatives,
-                    reason: result.reason,
+                    transaction: categorizedTransaction,
+                    confidence: confidence,
+                    alternatives: alternatives,
+                    reason: reason,
                     priority: .high
                 )
                 needsReview.append(review)
@@ -65,269 +102,187 @@ class SmartCategorizationService: ObservableObject {
             return review1.confidence < review2.confidence
         }
         
+        // Update learning stats
+        learningStats.totalProcessed += transactions.count
+        learningStats.calculateAccuracy()
+        
+        let apiSuccessRate = Double(learningStats.apiSuccessCount) / Double(learningStats.totalProcessed) * 100
+        print("📊 Categorization complete. API success rate: \(String(format: "%.1f", apiSuccessRate))%")
+        
         return processedTransactions
     }
     
-    private func smartCategorize(_ transaction: Transaction) async -> SmartCategorizationResult {
-        // Step 1: Check personal learning engine first
+    // MARK: - Fina Money API Integration
+    
+    private func categorizeWithFinaAPI(_ transactions: [Transaction]) async -> [TransactionCategory?] {
+        // Prepare transaction descriptions for API
+        let descriptions = transactions.map { $0.description }
+        
+        // Split into batches of 100 (API limit)
+        let batchSize = 100
+        var allResults: [TransactionCategory?] = []
+        
+        for batchStart in stride(from: 0, to: descriptions.count, by: batchSize) {
+            let batchEnd = min(batchStart + batchSize, descriptions.count)
+            let batch = Array(descriptions[batchStart..<batchEnd])
+            
+            print("🌐 Sending batch to Fina API: \(batch.count) transactions")
+            
+            let batchResults = await sendBatchToFinaAPI(batch)
+            allResults.append(contentsOf: batchResults)
+        }
+        
+        return allResults
+    }
+    
+    private func sendBatchToFinaAPI(_ descriptions: [String]) async -> [TransactionCategory?] {
+        guard let url = URL(string: finaAPIBaseURL) else {
+            print("❌ Invalid Fina API URL")
+            return Array(repeating: nil, count: descriptions.count)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(finaAPIKey, forHTTPHeaderField: "x-api-key")
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: descriptions)
+            request.httpBody = jsonData
+            
+            print("🔄 Making API request to Fina Money...")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📡 API Response Status: \(httpResponse.statusCode)")
+                
+                if httpResponse.statusCode == 200 {
+                    let categoryStrings = try JSONSerialization.jsonObject(with: data) as? [String] ?? []
+                    let categories = categoryStrings.map { mapFinaCategoryToLocal($0) }
+                    
+                    print("✅ API returned \(categories.count) categories")
+                    for (desc, cat) in zip(descriptions, categories) {
+                        print("   \(desc) -> \(cat?.rawValue ?? "nil")")
+                    }
+                    
+                    return categories
+                } else {
+                    let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+                    print("❌ API Error \(httpResponse.statusCode): \(errorString)")
+                    await MainActor.run {
+                        self.apiErrorMessage = "Fina API Error: \(httpResponse.statusCode)"
+                    }
+                }
+            }
+        } catch {
+            print("❌ Network error: \(error.localizedDescription)")
+            await MainActor.run {
+                self.apiErrorMessage = "Network error: \(error.localizedDescription)"
+            }
+        }
+        
+        // Return nil for all transactions if API fails
+        return Array(repeating: nil, count: descriptions.count)
+    }
+    
+    // MARK: - Category Mapping
+    
+    private func mapFinaCategoryToLocal(_ finaCategory: String) -> TransactionCategory? {
+        let normalizedCategory = finaCategory.lowercased().trimmingCharacters(in: .whitespaces)
+        
+        // Map Fina categories to our local categories
+        switch normalizedCategory {
+        case "food", "dining", "restaurants", "food & dining":
+            return .dining
+        case "grocery", "groceries", "supermarket":
+            return .groceries
+        case "transport", "transportation", "gas", "fuel", "car", "auto", "uber", "taxi":
+            return .transportation
+        case "entertainment", "movies", "games", "streaming", "subscription":
+            return .entertainment
+        case "shopping", "retail", "clothes", "clothing", "amazon", "online":
+            return .shopping
+        case "health", "healthcare", "medical", "pharmacy", "doctor":
+            return .healthcare
+        case "housing", "rent", "mortgage", "utilities", "home":
+            return .housing
+        case "education", "school", "books", "learning":
+            return .education
+        case "income", "salary", "wages", "payroll", "deposit":
+            return .transfers  // Map income to transfers since we don't have income category
+        case "transfer", "transfers", "bank transfer":
+            return .transfers
+        case "investment", "investments", "stocks", "crypto", "financial":
+            return .transfers  // Map investments to transfers since we don't have investments category
+        case "bills", "utilities", "electric", "water", "gas", "internet", "phone":
+            return .housing
+        default:
+            print("⚠️ Unknown Fina category: '\(finaCategory)' - mapping to uncategorized")
+            return .uncategorized
+        }
+    }
+    
+    // MARK: - Minimal Fallback System
+    
+    private func fallbackCategorization(_ transaction: Transaction) async -> (category: TransactionCategory, confidence: Double, reason: String, alternatives: [TransactionCategory]) {
+        
+        // Try personal learning engine first
         if let personalResult = await personalLearningEngine.predictCategory(for: transaction) {
-            return SmartCategorizationResult(
-                transaction: Transaction(
-                    id: transaction.id,
-                    date: transaction.date,
-                    description: transaction.description,
-                    amount: transaction.amount,
-                    category: personalResult.category,
-                    type: transaction.type
-                ),
+            return (
+                category: personalResult.category,
                 confidence: personalResult.confidence,
-                alternatives: personalResult.alternatives,
-                reason: "Based on your past categorization patterns"
+                reason: "Personal learning engine (API unavailable)",
+                alternatives: personalResult.alternatives
             )
         }
         
-        // Step 2: Enhanced rule-based categorization
-        let (ruleCategory, ruleConfidence) = Transaction.predictCategoryWithConfidence(
-            from: transaction.description, 
+        // Basic rule-based fallback
+        let (category, confidence) = Transaction.predictCategoryWithConfidence(
+            from: transaction.description,
             amount: transaction.amount
         )
         
-        // Step 3: Context analysis for ambiguous cases
-        let contextualResult = await analyzeContextualClues(transaction, ruleCategory: ruleCategory, ruleConfidence: ruleConfidence)
+        let alternatives = generateBasicAlternatives(for: category, amount: transaction.amount)
         
-        // Step 4: Generate alternatives for uncertain cases
-        let alternatives = generateAlternatives(
-            transaction: transaction,
-            primaryCategory: contextualResult.category,
-            confidence: contextualResult.confidence
-        )
-        
-        let finalTransaction = Transaction(
-            id: transaction.id,
-            date: transaction.date,
-            description: transaction.description,
-            amount: transaction.amount,
-            category: contextualResult.category,
-            type: transaction.type
-        )
-        
-        return SmartCategorizationResult(
-            transaction: finalTransaction,
-            confidence: contextualResult.confidence,
-            alternatives: alternatives,
-            reason: contextualResult.reason
+        return (
+            category: category,
+            confidence: max(confidence - 0.2, 0.3), // Lower confidence for fallback
+            reason: "Rule-based fallback (API unavailable)",
+            alternatives: alternatives
         )
     }
     
-    // MARK: - Contextual Analysis
-    
-    private func analyzeContextualClues(_ transaction: Transaction, ruleCategory: TransactionCategory, ruleConfidence: Double) async -> (category: TransactionCategory, confidence: Double, reason: String) {
-        
-        var adjustedConfidence = ruleConfidence
-        var finalCategory = ruleCategory
-        var reason = "Rule-based categorization"
-        
-        let description = transaction.description.lowercased()
-        let amount = transaction.amount
-        
-        // Time-based context
-        let timeContext = analyzeTimeContext(transaction.date, amount: amount)
-        if timeContext.confidence > 0 {
-            adjustedConfidence = max(adjustedConfidence, timeContext.confidence)
-            if timeContext.confidence > ruleConfidence {
-                finalCategory = timeContext.category
-                reason = timeContext.reason
-            }
+    private func generateAlternatives(for category: TransactionCategory) -> [TransactionCategory] {
+        switch category {
+        case .dining:
+            return [.groceries, .entertainment, .shopping]
+        case .groceries:
+            return [.dining, .shopping, .healthcare]
+        case .transportation:
+            return [.shopping, .entertainment, .dining]
+        case .entertainment:
+            return [.dining, .shopping, .transportation]
+        case .shopping:
+            return [.entertainment, .groceries, .healthcare]
+        case .healthcare:
+            return [.shopping, .groceries, .entertainment]
+        case .housing:
+            return [.shopping, .healthcare, .transportation]
+        case .education:
+            return [.shopping, .entertainment, .healthcare]
+        default:
+            return [.shopping, .dining, .entertainment]
         }
-        
-        // Amount pattern analysis
-        let amountContext = analyzeAmountPatterns(amount: amount, description: description)
-        if amountContext.confidence > adjustedConfidence {
-            finalCategory = amountContext.category
-            adjustedConfidence = amountContext.confidence
-            reason = amountContext.reason
-        }
-        
-        // Merchant chain analysis
-        let merchantContext = analyzeMerchantChains(description: description, amount: amount)
-        if merchantContext.confidence > adjustedConfidence {
-            finalCategory = merchantContext.category
-            adjustedConfidence = merchantContext.confidence
-            reason = merchantContext.reason
-        }
-        
-        // Special ambiguity handling
-        let ambiguityResult = handleCommonAmbiguities(description: description, amount: amount, currentCategory: finalCategory)
-        if ambiguityResult.needsReview {
-            adjustedConfidence = min(adjustedConfidence, 0.6) // Force into review queue
-            reason = ambiguityResult.reason
-        }
-        
-        return (finalCategory, adjustedConfidence, reason)
     }
     
-    private func analyzeTimeContext(_ date: Date, amount: Double) -> (category: TransactionCategory, confidence: Double, reason: String) {
-        let calendar = Calendar.current
-        let hour = calendar.component(.hour, from: date)
-        let weekday = calendar.component(.weekday, from: date)
-        
-        // Early morning coffee/breakfast patterns
-        if (6...9).contains(hour) && amount < 15 {
-            return (.dining, 0.8, "Early morning small purchase - likely coffee/breakfast")
-        }
-        
-        // Lunch time patterns
-        if (11...14).contains(hour) && (5...25).contains(amount) {
-            return (.dining, 0.75, "Lunch time purchase in typical lunch price range")
-        }
-        
-        // Evening entertainment/dining
-        if (18...23).contains(hour) && amount > 30 {
-            return (.entertainment, 0.7, "Evening purchase - likely entertainment or dinner")
-        }
-        
-        // Weekend patterns
-        if [1, 7].contains(weekday) && (50...200).contains(amount) {
-            return (.shopping, 0.65, "Weekend purchase in shopping range")
-        }
-        
-        return (.uncategorized, 0, "No clear time-based pattern")
-    }
-    
-    private func analyzeAmountPatterns(amount: Double, description: String) -> (category: TransactionCategory, confidence: Double, reason: String) {
-        // Subscription amount patterns
-        let commonSubscriptions = [9.99, 19.99, 29.99, 49.99, 99.99, 4.99, 14.99]
-        if commonSubscriptions.contains(where: { abs(amount - $0) < 0.01 }) {
-            return (.entertainment, 0.85, "Common subscription price point")
-        }
-        
-        // Gas station amount patterns (typically $20-80, often ending in .9)
-        if (20...80).contains(amount) && description.contains(where: { ["shell", "chevron", "exxon", "bp", "mobil"].contains($0.lowercased()) }) {
-            let lastDigits = Int((amount * 100).truncatingRemainder(dividingBy: 100))
-            if [9, 19, 29, 39, 49, 59, 69, 79, 89, 99].contains(lastDigits) {
-                return (.transportation, 0.9, "Gas station with typical fuel pricing pattern")
-            }
-        }
-        
-        // Grocery patterns (common total amounts)
-        if [25.67, 34.56, 47.89, 52.34, 67.43].contains(where: { abs(amount - $0) < 20 }) &&
-           (20...150).contains(amount) {
-            return (.groceries, 0.75, "Amount pattern typical of grocery shopping")
-        }
-        
-        return (.uncategorized, 0, "No clear amount-based pattern")
-    }
-    
-    private func analyzeMerchantChains(description: String, amount: Double) -> (category: TransactionCategory, confidence: Double, reason: String) {
-        let desc = description.lowercased()
-        
-        // Multi-purpose merchants - use amount to disambiguate
-        if desc.contains("target") {
-            if amount < 30 {
-                return (.groceries, 0.8, "Target - small amount likely groceries/essentials")
-            } else if amount > 100 {
-                return (.shopping, 0.8, "Target - large amount likely general merchandise")
-            } else {
-                return (.shopping, 0.6, "Target - medium amount, category uncertain")
-            }
-        }
-        
-        if desc.contains("walmart") {
-            if amount < 50 {
-                return (.groceries, 0.8, "Walmart - small amount likely groceries")
-            } else {
-                return (.shopping, 0.7, "Walmart - larger amount likely general merchandise")
-            }
-        }
-        
-        if desc.contains("amazon") {
-            if amount < 25 {
-                return (.shopping, 0.7, "Amazon - small amount likely household items")
-            } else if amount > 100 {
-                return (.shopping, 0.8, "Amazon - large amount likely major purchase")
-            } else {
-                return (.shopping, 0.6, "Amazon - medium amount, uncertain category")
-            }
-        }
-        
-        if desc.contains("costco") {
-            if amount > 100 {
-                return (.groceries, 0.85, "Costco - large amount typical of bulk grocery shopping")
-            } else {
-                return (.groceries, 0.75, "Costco - likely groceries but smaller than typical")
-            }
-        }
-        
-        return (.uncategorized, 0, "No specific merchant chain pattern")
-    }
-    
-    private func handleCommonAmbiguities(description: String, amount: Double, currentCategory: TransactionCategory) -> (needsReview: Bool, reason: String) {
-        let desc = description.lowercased()
-        
-        // Known ambiguous merchants
-        let ambiguousMerchants = [
-            "amazon", "target", "walmart", "cvs", "walgreens", "shell", "chevron",
-            "exxon", "bp", "7-eleven", "wawa", "sheetz"
-        ]
-        
-        for merchant in ambiguousMerchants {
-            if desc.contains(merchant) {
-                return (true, "Merchant '\(merchant)' sells multiple categories of items - needs verification")
-            }
-        }
-        
-        // Vague descriptions
-        let vagueTerms = ["purchase", "payment", "transaction", "pos", "debit", "credit"]
-        if vagueTerms.contains(where: { desc.contains($0) }) && !desc.contains("specific merchant name") {
-            return (true, "Vague transaction description - manual review recommended")
-        }
-        
-        // Unusual amounts for category
-        if currentCategory == .dining && amount > 100 {
-            return (true, "Large amount for dining category - might be catering or group meal")
-        }
-        
-        if currentCategory == .groceries && amount > 300 {
-            return (true, "Very large grocery amount - might include non-grocery items")
-        }
-        
-        return (false, "No ambiguity detected")
-    }
-    
-    private func generateAlternatives(transaction: Transaction, primaryCategory: TransactionCategory, confidence: Double) -> [TransactionCategory] {
-        let description = transaction.description.lowercased()
-        let amount = transaction.amount
-        
-        var alternatives: [TransactionCategory] = []
-        
-        // Generate contextual alternatives based on merchant
-        if description.contains("amazon") {
-            alternatives = [.shopping, .entertainment, .groceries, .healthcare]
-        } else if description.contains("target") || description.contains("walmart") {
-            alternatives = [.shopping, .groceries]
-        } else if description.contains("cvs") || description.contains("walgreens") {
-            alternatives = [.healthcare, .shopping, .dining]
-        } else if description.contains("shell") || description.contains("chevron") {
-            alternatives = [.transportation, .dining]
+    private func generateBasicAlternatives(for category: TransactionCategory, amount: Double) -> [TransactionCategory] {
+        if amount < 30 {
+            return [.dining, .shopping, .groceries]
+        } else if amount < 100 {
+            return [.shopping, .groceries, .entertainment]
         } else {
-            // Generate alternatives based on amount and common categories
-            if amount < 30 {
-                alternatives = [.dining, .shopping, .groceries]
-            } else if amount < 100 {
-                alternatives = [.shopping, .groceries, .entertainment]
-            } else {
-                alternatives = [.shopping, .housing, .transportation]
-            }
+            return [.shopping, .housing, .transportation]
         }
-        
-        // Remove the primary category from alternatives
-        alternatives.removeAll { $0 == primaryCategory }
-        
-        // Ensure we don't suggest uncategorized as an alternative
-        alternatives.removeAll { $0 == .uncategorized }
-        
-        // Limit to top 3 most likely alternatives
-        return Array(alternatives.prefix(3))
     }
     
     // MARK: - User Feedback Learning
@@ -336,7 +291,7 @@ class SmartCategorizationService: ObservableObject {
         // Remove from review queue if present
         reviewQueue.removeAll { $0.transaction.id == transaction.id }
         
-        // Learn from this correction
+        // Learn from this correction for fallback scenarios
         personalLearningEngine.learnFromCorrection(
             description: transaction.description,
             amount: transaction.amount,
@@ -347,6 +302,8 @@ class SmartCategorizationService: ObservableObject {
         // Update learning stats
         learningStats.userCorrections += 1
         learningStats.calculateAccuracy()
+        
+        print("📚 User correction learned: \(transaction.description) -> \(category)")
     }
     
     func markAsCorrect(transaction: Transaction) {
@@ -379,8 +336,17 @@ class SmartCategorizationService: ObservableObject {
             mediumConfidence: learningStats.mediumConfidenceCount,
             lowConfidence: learningStats.lowConfidenceCount,
             userCorrections: learningStats.userCorrections,
-            estimatedAccuracy: learningStats.estimatedAccuracy
+            estimatedAccuracy: learningStats.estimatedAccuracy,
+            apiSuccessRate: learningStats.totalProcessed > 0 ? Double(learningStats.apiSuccessCount) / Double(learningStats.totalProcessed) : 0
         )
+    }
+    
+    // MARK: - API Health Check
+    
+    func testFinaAPIConnection() async -> Bool {
+        let testDescriptions = ["Starbucks Coffee", "Shell Gas Station"]
+        let results = await sendBatchToFinaAPI(testDescriptions)
+        return results.contains { $0 != nil }
     }
 }
 
@@ -415,14 +381,16 @@ class LearningStats: ObservableObject {
     @Published var userCorrections = 0
     @Published var userConfirmations = 0
     @Published var estimatedAccuracy: Double = 0.0
+    @Published var apiSuccessCount = 0
+    @Published var fallbackCount = 0
     
     func calculateAccuracy() {
         let total = totalProcessed
         if total > 0 {
-            // Estimate accuracy based on confidence distribution and user feedback
-            let highConfidenceAccuracy = 0.95
-            let mediumConfidenceAccuracy = 0.80
-            let lowConfidenceAccuracy = 0.50
+            // Higher base accuracy since we're using professional API
+            let highConfidenceAccuracy = 0.98  // API results are very accurate
+            let mediumConfidenceAccuracy = 0.85
+            let lowConfidenceAccuracy = 0.60
             
             let weightedAccuracy = (
                 Double(highConfidenceCount) * highConfidenceAccuracy +
@@ -434,7 +402,7 @@ class LearningStats: ObservableObject {
             let feedbackTotal = userCorrections + userConfirmations
             if feedbackTotal > 0 {
                 let userAccuracy = Double(userConfirmations) / Double(feedbackTotal)
-                estimatedAccuracy = (weightedAccuracy + userAccuracy) / 2.0
+                estimatedAccuracy = (weightedAccuracy * 0.7) + (userAccuracy * 0.3)
             } else {
                 estimatedAccuracy = weightedAccuracy
             }
@@ -449,6 +417,7 @@ struct AccuracyStats {
     let lowConfidence: Int
     let userCorrections: Int
     let estimatedAccuracy: Double
+    let apiSuccessRate: Double
     
     var reviewRate: Double {
         let needsReview = mediumConfidence + lowConfidence

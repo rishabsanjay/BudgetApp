@@ -9,6 +9,7 @@ struct TransactionsView: View {
     @State private var isLoadingPlaidData = false
     @State private var plaidStatusMessage = ""
     @State private var selectedCategory: TransactionCategory?
+    @State private var showingManualEntry = false
     
     @State private var linkToken: String? = nil
     @State private var isLoadingLinkToken = false
@@ -35,6 +36,16 @@ struct TransactionsView: View {
             .navigationTitle("Transactions")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        showingManualEntry = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.primary)
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 12) {
                         Button {
@@ -82,6 +93,9 @@ struct TransactionsView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(transactionManager.errorMessage ?? "An unknown error occurred")
+            }
+            .sheet(isPresented: $showingManualEntry) {
+                ManualTransactionEntry(transactionManager: transactionManager)
             }
         }
         .sheet(isPresented: $showingPlaidLink) {
@@ -211,7 +225,7 @@ struct TransactionsView: View {
                     .font(.system(size: 24, weight: .bold))
                     .foregroundColor(.primary)
                 
-                Text("Import transactions from a file or connect your bank account to get started")
+                Text("Add transactions manually, import from a file, or connect your bank account")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -221,6 +235,23 @@ struct TransactionsView: View {
             
             VStack(spacing: 12) {
                 Button {
+                    showingManualEntry = true
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .medium))
+                        Text("Add Transaction")
+                            .font(.system(size: 16, weight: .medium))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.primary)
+                    .cornerRadius(8)
+                }
+                
+                Button {
                     transactionManager.showingFileImporter = true
                 } label: {
                     HStack(spacing: 8) {
@@ -229,11 +260,11 @@ struct TransactionsView: View {
                         Text("Import File")
                             .font(.system(size: 16, weight: .medium))
                     }
-                    .foregroundColor(.white)
+                    .foregroundColor(.primary)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 12)
                     .frame(maxWidth: .infinity)
-                    .background(Color.primary)
+                    .background(Color(.systemGray6))
                     .cornerRadius(8)
                 }
                 

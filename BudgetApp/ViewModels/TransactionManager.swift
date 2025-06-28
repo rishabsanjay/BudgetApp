@@ -133,30 +133,40 @@ class TransactionManager: ObservableObject {
             }
             
             Task {
+                print("🔗 Testing Fina Money API connection...")
+                let apiIsHealthy = await smartCategorizationService.testFinaAPIConnection()
+                print("🔗 Fina API health: \(apiIsHealthy ? "✅ Connected" : "❌ Unavailable")")
+                
                 let enhancedTransactions = await smartCategorizationService.categorizeTransactions(tempTransactions)
                 
                 let categorizedCount = enhancedTransactions.filter { $0.category != .uncategorized }.count
                 let categorizationRate = Double(categorizedCount) / Double(enhancedTransactions.count) * 100
+                
+                let apiStats = smartCategorizationService.getAccuracyStats()
+                let apiSuccessRate = apiStats.apiSuccessRate * 100
                 
                 print("📊 Smart Categorization Results:")
                 print("📊 Total transactions: \(enhancedTransactions.count)")
                 print("📊 Categorized: \(categorizedCount)")
                 print("📊 Uncategorized: \(enhancedTransactions.count - categorizedCount)")
                 print("📊 Success rate: \(String(format: "%.1f", categorizationRate))%")
+                print("📊 API success rate: \(String(format: "%.1f", apiSuccessRate))%")
                 print("📊 Review queue: \(smartCategorizationService.reviewQueue.count) items")
                 
                 self.transactions.append(contentsOf: enhancedTransactions)
                 
                 print("📄 CSV Import Summary: Success: \(successCount), Errors: \(errorCount), Skipped: \(skippedCount)")
-                print("📊 Smart categorization success rate: \(String(format: "%.1f", categorizationRate))%")
                 
                 if successCount > 0 {
                     let reviewCount = smartCategorizationService.reviewQueue.count
                     let message = "Successfully imported \(successCount) transactions" +
                                   (errorCount > 0 ? " (\(errorCount) errors)" : "") +
                                   (skippedCount > 0 ? " (\(skippedCount) skipped)" : "") +
-                                  "\n\nSmart Categorization: \(categorizedCount)/\(enhancedTransactions.count) (\(String(format: "%.1f", categorizationRate))%)" +
-                                  (reviewCount > 0 ? "\n\(reviewCount) transactions flagged for review" : "\nAll transactions categorized with high confidence!")
+                                  "\n\n🤖 Fina Money API Categorization:" +
+                                  "\n• \(categorizedCount)/\(enhancedTransactions.count) categorized (\(String(format: "%.1f", categorizationRate))%)" +
+                                  "\n• API success rate: \(String(format: "%.1f", apiSuccessRate))%" +
+                                  (reviewCount > 0 ? "\n• \(reviewCount) transactions flagged for review" : "\n• All transactions categorized with high confidence!") +
+                                  (apiIsHealthy ? "" : "\n⚠️ API unavailable - used fallback categorization")
                     print("📄 CSV Import Result: \(message)")
                 } else {
                     let errorDetails = errors.isEmpty ? "All rows were skipped or invalid." : errors.prefix(5).joined(separator: "\n")

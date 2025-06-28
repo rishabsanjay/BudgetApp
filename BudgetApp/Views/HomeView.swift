@@ -35,7 +35,7 @@ struct MinimalTabBar: View {
     @Binding var selectedTab: Int
     
     private let tabs = [
-        TabItem(title: "Transactions", icon: "list.bullet"),
+        TabItem(title: "Transactions", icon: "dollarsign.circle"),
         TabItem(title: "Budget", icon: "chart.pie"),
         TabItem(title: "Analytics", icon: "chart.bar")
     ]
@@ -77,7 +77,7 @@ struct TabItem {
 struct BudgetDashboardView: View {
     @ObservedObject var budgetManager: BudgetManager
     @ObservedObject var transactionManager: TransactionManager
-    @State private var showingBudgetSetup = false
+    @State private var showingInlineCreation = false
     
     var body: some View {
         NavigationStack {
@@ -98,9 +98,11 @@ struct BudgetDashboardView: View {
                         Spacer()
                         
                         Button {
-                            showingBudgetSetup = true
+                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                showingInlineCreation.toggle()
+                            }
                         } label: {
-                            Image(systemName: "plus")
+                            Image(systemName: showingInlineCreation ? "xmark" : "plus")
                                 .font(.system(size: 18, weight: .medium))
                                 .foregroundColor(.primary)
                         }
@@ -108,10 +110,26 @@ struct BudgetDashboardView: View {
                     .padding(.horizontal, 20)
                     .padding(.top, 20)
                     
+                    // Inline budget creation
+                    if showingInlineCreation {
+                        InlineBudgetCreation(budgetManager: budgetManager) {
+                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                showingInlineCreation = false
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.8).combined(with: .opacity),
+                            removal: .scale(scale: 0.8).combined(with: .opacity)
+                        ))
+                    }
+                    
                     // Budget content
-                    if budgetManager.activeBudgets.isEmpty {
+                    if budgetManager.activeBudgets.isEmpty && !showingInlineCreation {
                         SimpleEmptyBudgetState {
-                            showingBudgetSetup = true
+                            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                                showingInlineCreation = true
+                            }
                         }
                         .padding(.horizontal, 20)
                     } else {
@@ -129,9 +147,6 @@ struct BudgetDashboardView: View {
                 }
             }
             .navigationBarHidden(true)
-        }
-        .sheet(isPresented: $showingBudgetSetup) {
-            BudgetSetupView(budgetManager: budgetManager)
         }
     }
 }
