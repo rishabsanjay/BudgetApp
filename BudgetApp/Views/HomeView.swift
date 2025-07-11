@@ -3,7 +3,9 @@ import SwiftUI
 struct HomeView: View {
     @StateObject private var transactionManager = TransactionManager()
     @StateObject private var budgetManager = BudgetManager()
+    @EnvironmentObject var authManager: AuthManager
     @State private var selectedTab = 0
+    @State private var showingProfile = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +29,23 @@ struct HomeView: View {
             MinimalTabBar(selectedTab: $selectedTab)
         }
         .background(Color(.systemBackground))
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingProfile = true
+                } label: {
+                    Image(systemName: "person.circle")
+                        .font(.system(size: 18, weight: .medium))
+                }
+            }
+        }
+        .sheet(isPresented: $showingProfile) {
+            ProfileView()
+                .environmentObject(authManager)
+        }
+        .onAppear {
+            print("HomeView appeared")
+        }
     }
 }
 

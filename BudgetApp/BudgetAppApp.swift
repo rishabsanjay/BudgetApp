@@ -2,9 +2,17 @@ import SwiftUI
 
 @main
 struct BudgetAppApp: App {
+    @StateObject private var authManager = AuthManager()
+    
     var body: some Scene {
         WindowGroup {
-            HomeView()
+            if authManager.isAuthenticated {
+                HomeView()
+                    .environmentObject(authManager)
+            } else {
+                AuthView()
+                    .environmentObject(authManager)
+            }
         }
     }
 }

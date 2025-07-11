@@ -13,28 +13,114 @@ class SupabaseService: ObservableObject {
         )
     }
     
-    // MARK: - Plaid Integration Functions (Placeholder - need Edge Functions)
+    // MARK: - Plaid Integration Functions
     
     func createLinkToken() async throws -> String {
-        // TODO: Implement when Supabase Edge Functions are set up
-        throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Plaid integration requires Supabase Edge Functions to be deployed"])
+        guard let url = URL(string: "https://qmxyiqjwpgxucwhyckzg.functions.supabase.co/create-link-token") else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        
+        // Empty body for POST request
+        request.httpBody = "{}".data(using: .utf8)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(domain: "SupabaseError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Request failed with status \(httpResponse.statusCode): \(errorString)"])
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let token = json?["link_token"] as? String else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No link_token in response"])
+        }
+
+        return token
     }
     
     func exchangeToken(publicToken: String) async throws -> String {
-        // TODO: Implement when Supabase Edge Functions are set up
-        throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Plaid integration requires Supabase Edge Functions to be deployed"])
+        guard let url = URL(string: "https://qmxyiqjwpgxucwhyckzg.functions.supabase.co/exchange-token") else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let requestBody = ["public_token": publicToken]
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(domain: "SupabaseError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Request failed with status \(httpResponse.statusCode): \(errorString)"])
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let accessToken = json?["access_token"] as? String else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No access_token in response"])
+        }
+
+        return accessToken
     }
     
     func getTransactions(accessToken: String) async throws -> [[String: Any]] {
-        // TODO: Implement when Supabase Edge Functions are set up
-        throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Plaid integration requires Supabase Edge Functions to be deployed"])
+        guard let url = URL(string: "https://qmxyiqjwpgxucwhyckzg.functions.supabase.co/get-transactions") else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
+        
+        let requestBody = ["access_token": accessToken]
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+        }
+        
+        if httpResponse.statusCode != 200 {
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw NSError(domain: "SupabaseError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "Request failed with status \(httpResponse.statusCode): \(errorString)"])
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let transactions = json?["transactions"] as? [[String: Any]] else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "No transactions in response"])
+        }
+
+        return transactions
     }
     
     // MARK: - Database Operations
     
     func saveTransaction(_ transaction: Transaction) async throws {
+        guard let userId = client.auth.currentUser?.id else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+        
         struct TransactionData: Codable {
             let id: String
+            let user_id: String
             let date: String
             let description: String
             let amount: Double
@@ -45,6 +131,7 @@ class SupabaseService: ObservableObject {
         
         let transactionData = TransactionData(
             id: transaction.id,
+            user_id: userId.uuidString,
             date: ISO8601DateFormatter().string(from: transaction.date),
             description: transaction.description,
             amount: transaction.amount,
@@ -89,8 +176,13 @@ class SupabaseService: ObservableObject {
     }
     
     func loadTransactions() async throws -> [Transaction] {
+        guard let userId = client.auth.currentUser?.id else {
+            throw NSError(domain: "SupabaseError", code: -1, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+        
         struct SupabaseTransaction: Codable {
             let id: String
+            let user_id: String
             let date: String
             let description: String
             let amount: Double
@@ -101,6 +193,7 @@ class SupabaseService: ObservableObject {
         let response: [SupabaseTransaction] = try await client.database
             .from("transactions")
             .select()
+            .eq("user_id", value: userId.uuidString)
             .order("date", ascending: false)
             .execute()
             .value

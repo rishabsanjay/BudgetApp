@@ -1,54 +1,34 @@
-# 💰 BudgetApp - AI-Powered Personal Finance Tracker
+# BudgetApp 💰
 
-A modern iOS budget tracking app with intelligent transaction categorization, beautiful UI, and comprehensive financial insights.
-
-![Swift](https://img.shields.io/badge/Swift-5.9-orange.svg)
-![iOS](https://img.shields.io/badge/iOS-15.0+-blue.svg)
-![SwiftUI](https://img.shields.io/badge/SwiftUI-4.0-green.svg)
-![Xcode](https://img.shields.io/badge/Xcode-15.0+-blue.svg)
+A comprehensive iOS budget tracking app built with SwiftUI, featuring smart transaction categorization, bank integration, and cloud sync.
 
 ## ✨ Features
 
-### 🤖 **AI-Powered Categorization**
-- **95% Accuracy** with Fina Money API integration
-- **Smart Fallback System** with personal learning engine
-- **Real-time API Health Monitoring**
-- **Batch Processing** for efficient large imports
+- 📊 **Smart Transaction Categorization** - AI-powered categorization with personal learning
+- 📁 **File Import** - Import CSV/Excel bank statements with intelligent parsing
+- 🏦 **Bank Integration** - Connect bank accounts via Plaid for automatic transaction sync
+- 💰 **Budget Tracking** - Create and track budgets with real-time progress monitoring
+- 📈 **Analytics Dashboard** - Visualize spending patterns and financial insights
+- 🔐 **User Authentication** - Secure sign-up/sign-in with Supabase Auth
+- ☁️ **Cloud Sync** - All data synced across devices with Supabase
+- 🎯 **Personal Learning Engine** - App learns from your categorization preferences
 
-### 💳 **Transaction Management**
-- **Manual Entry** with beautiful card-based UI
-- **CSV/Excel Import** with intelligent parsing
-- **Bank Integration** via Plaid API
-- **Smart Search & Filtering** by category and description
-- **Automatic Type Detection** (income vs expense)
+## 🛠 Tech Stack
 
-### 📊 **Budget Tracking**
-- **Inline Budget Creation** (no more popups!)
-- **Real-time Progress Tracking** with visual indicators
-- **Multiple Budget Periods** (weekly, monthly, yearly)
-- **Category-based Spending Limits**
-- **Smart Notifications** when approaching limits
-
-### 📈 **Analytics & Insights**
-- **Spending Trends** over time
-- **Category Breakdown** with visual charts
-- **Budget Performance** tracking
-- **Accuracy Statistics** for categorization
-
-### 🎨 **Beautiful UI/UX**
-- **Modern SwiftUI Design** with smooth animations
-- **Intuitive Navigation** with tab-based interface
-- **Responsive Layout** optimized for all iOS devices
-- **Dark Mode Support**
-- **Accessibility Features**
+- **Frontend**: SwiftUI (iOS 18.1+)
+- **Backend**: Supabase (Database, Auth, Edge Functions)
+- **Bank Integration**: Plaid Link iOS SDK
+- **File Processing**: CoreXLSX for Excel import
+- **Architecture**: MVVM with ObservableObject
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- iOS 15.0+
-- Xcode 15.0+
-- Swift 5.9+
+- Xcode 16.1+
+- iOS 18.1+ Simulator/Device
+- Supabase Project
+- Plaid Developer Account
 
 ### Installation
 
-1. **Clone the repository**
+1. Clone the repository
